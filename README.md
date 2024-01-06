@@ -5,6 +5,8 @@
 
 -In other words, this script allows you to use PNG character cards exported from Faraday in other character AI apps, by exporting the data to a TavernAI compatiable json file. 
 
+Faraday video installation guide (NSFW): https://www.youtube.com/watch?v=Z-Jh2csesqc
+
 ====Requirments====
 
 Faraday (App that allows you to chat with AI Characters Offline): https://faraday.dev/
