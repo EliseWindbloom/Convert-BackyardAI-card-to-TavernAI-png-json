@@ -46,7 +46,7 @@ def get_character(file_path):
     character = aichar.create_character(
         name=char_name,
         summary=char_persona,
-        personality=char_persona,
+        personality="",#char_persona,
         scenario="",
         greeting_message=char_greeting,
         example_messages=example_dialogue,
