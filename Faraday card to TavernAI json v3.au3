@@ -3,7 +3,7 @@
 ;Notes: v1 - initial release
 ;	    v2 - bug fixs and more stable
 ;       v3 - added paritial support for older(?) faraday cards to be converted as well (using unicode mode)
-;            (note there seems to artifacts where text like ' should be for these older cards)
+;            (note there seems to be artifacts where text like "'" should be for these older cards)
 ;            (Looks like you can get around using older cards for now by duplicating the character in Faraday then exporting that dulicated character as a PNG)
 
 #include <FileConstants.au3>
