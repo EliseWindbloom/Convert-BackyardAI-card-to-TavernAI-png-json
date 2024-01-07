@@ -21,7 +21,7 @@ PC running Microsoft Windows (required for Autoit)
 3) Download *Faraday card to TavernAI json v2.au3* in this repository, run it and choose the PNG file you just exported.
 4) A JSON file will automatically be generated, this TarvernAI json file should be much more compatiable with different AI character apps than the Faraday card.
 
-<h3> # ==Setup Python (outputs a TavernAI JSON file and TavernAI PNG file)== </h3>
+<h3> ==Setup Python (outputs a TavernAI JSON file and TavernAI PNG file)== </h3>
 
 1) Download Python
 2) Make or load a character in Faraday, then go to the Home area -> click on the 3 vertical dots next to the card you want -> click on "Export To PNG" like [this](https://files.catbox.moe/i7zusw.png)
