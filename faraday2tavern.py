@@ -27,6 +27,7 @@ def process_special_tokens(input_str):
     tokens = ["{character}", "{user}"]
     input_str = input_str.replace("{character}", "{{char}}")
     input_str = input_str.replace("\\n", "\n")
+    input_str = input_str.replace('\\\"', '"')
     for token in tokens:
         input_str = input_str.replace(token, f"{{{{{token[1:-1]}}}}}")
     return input_str
