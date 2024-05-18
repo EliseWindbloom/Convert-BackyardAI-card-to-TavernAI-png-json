@@ -3,7 +3,7 @@
 
 -These small scripts converts Faraday PNG character cards to TavernAI json files/TavernAI character card PNGs, enabling compatibility and the ability to share your cards with most other character AI apps.
 
-[Faraday video installation guide](https://www.youtube.com/watch?v=Z-Jh2csesqc) (NSFW)
+[Faraday video installation guide](https://www.youtube.com/watch?v=i_vM8T-oXSw) (NSFW)
 
 <h3> ====Requirments==== </h3>
 
