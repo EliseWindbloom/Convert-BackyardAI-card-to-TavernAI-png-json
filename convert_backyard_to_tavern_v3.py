@@ -10,6 +10,7 @@ import json
 import time
 import os
 import sys
+import re
 
 class PngError(Exception):
     pass
@@ -82,7 +83,85 @@ class Png:
 
         return Png.encode_chunks(chunks)
     
+def extract_and_decode_base64(text):
+    # Regular expression to find base64 encoded strings
+    base64_pattern = r'([A-Za-z0-9+/=]+)'
+
+    # Find all potential base64 encoded parts
+    base64_parts = re.findall(base64_pattern, text)
+    
+    for part in base64_parts:
+        try:
+            # Decode the base64 part
+            #decoded_bytes = base64.b64decode(part)
+            #decoded_string = decoded_bytes.decode('utf-8')
+            
+            # Print the decoded string
+            #print(f"Base64 Encoded Part: {part}")
+            #print(f"Decoded Text: {decoded_string}\n")
+
+            return part #returns first group only
+        except (base64.binascii.Error, UnicodeDecodeError):
+            # If there's an error in decoding, skip this part
+            continue
+
 def get_faraday_png_extra_base64_data(png_file_path):
+    with open(png_file_path, 'rb') as f:
+        # Read the entire PNG file
+        png_data = f.read()
+
+        # Search for the start and end markers of the base64 data
+        start_marker = b'ASCII'
+        end_marker = b'IDATx'
+        start_index = png_data.find(start_marker)
+        end_index = png_data.find(end_marker, start_index + len(start_marker))
+
+        if start_index != -1 and end_index != -1:
+            # Extract the base64 encoded data
+            base64_data = png_data[start_index + len(start_marker):end_index]
+
+            # Clean up base64 data by removing non-base64 characters
+            cleaned_base64_data = re.sub(rb'[^a-zA-Z0-9+/]', b'', base64_data)
+            
+            # Remove any padding characters ('=')
+            while len(cleaned_base64_data) % 4 != 0:
+                cleaned_base64_data = cleaned_base64_data[:-1]
+            #print(f"cleaned_base64_data=={cleaned_base64_data}") #this is the encoded data
+            # Decode the base64 data without adding padding
+            decoded_data = base64.b64decode(cleaned_base64_data) 
+            #print(f"decoded_data=={decoded_data}") #this is the encoded data
+            decoded_string = decoded_data.decode('utf-8', errors='replace') #this is the decoded data
+
+            version_index = decoded_string.find('"version":')
+            if version_index != -1 and '}' not in decoded_string[version_index:]:
+                decoded_string += "}" #add } at the end if missing after '"version":'
+            #print(f"decoded_string=={decoded_string}") #this is the encoded data
+            
+            #return decoded_data
+            # Attempt to find and remove extraneous characters after the JSON data
+            json_start = decoded_string.find('{')
+            json_end = decoded_string.rfind('}') + 1
+            if json_start == -1 or json_end == -1:
+                print("Error: JSON object boundaries not found.")
+                return None
+        
+            json_string = decoded_string[json_start:json_end]
+            #return json_string
+            #Attempt to load the string as JSON and pretty-print it
+            try:
+                json_data = json.loads(json_string)
+                formatted_json = json.dumps(json_data, indent=4)
+                return formatted_json
+            except json.JSONDecodeError as e:
+                print(f"Error: JSON decoding failed. {str(e)}")
+                return None
+            
+        else:
+            print("Base64 encoded data not found in the PNG file.")
+            return None
+        
+    
+def get_faraday_png_extra_base64_data_UNUSED(png_file_path):
     #This function is only for Faraday PNGS! use the other functions for normal tavern pngs
     #Extracts the extra Base64 data from a PNG file and returns it as a formatted JSON string.
     #Args:
@@ -111,13 +190,15 @@ def get_faraday_png_extra_base64_data(png_file_path):
         return None
     
     start_pos = marker_pos + len(ascii_marker)
-    end_pos = png_file_string.find("Q==", start_pos)
+    #end_pos = png_file_string.find("Q==", start_pos)
+    end_pos = png_file_string.find("IDATx", start_pos)
     
     if end_pos == -1:
-        print("Error: Ending 'Q==' not found.")
+        print("Error: Ending 'IDATx' not found.")
         return None
     
-    base64_data = png_file_string[start_pos:end_pos + 3]
+    base64_data = png_file_string[start_pos:end_pos + 5]
+    base64_data = extract_and_decode_base64(base64_data)#tries to strip string to only get the base64 data
     clean_base64_data = ''.join(char for char in base64_data if char.isalnum() or char in '+/=')
     
     # Decoding Base64 data
@@ -168,12 +249,12 @@ def convert_faraday_png_to_tavern_data(faraday_png_file_path):
         first_message = json_data.get('character', {}).get('firstMessage', 'N/A')
         scenario = json_data.get('character', {}).get('scenario', 'N/A')
         
-        #print("==AI Display Name:", ai_display_name)
-        #print("==AI Name:", ai_name)
-        #print("==AI Persona:", ai_persona)
-        #print("==Custom Dialogue:", custom_dialogue)#example text
-        #print("==First Message:", first_message)
-        #print("==Scenario:", scenario)
+        print("==AI Display Name:", ai_display_name)
+        print("==AI Name:", ai_name)
+        print("==AI Persona:", ai_persona)
+        print("==Custom Dialogue:", custom_dialogue)#example text
+        print("==First Message:", first_message)
+        print("==Scenario:", scenario)
 
         #format as tavern data and returns
         tavern_extracted_text = create_new_data(ai_name, "", ai_persona, scenario, first_message, custom_dialogue)
@@ -265,7 +346,10 @@ def main():
 
     # Process the PNG file path
     base_name, ext = os.path.splitext(os.path.basename(png_file_path))
-    #print(f"ext=<{ext}> base_name=<{base_name}>")
+    print(f"base_name=<{base_name}> ext=<{ext}>")
+    #filename = sys.argv[1]
+    #print(f"Filename: {filename}")
+
     if ext.lower() != ".png":
         print("Error: Please provide a PNG file.")
         sys.exit(1)
