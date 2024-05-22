@@ -13,4 +13,4 @@ set "input_file=%~1"
 
 cd /d %~dp0
 
-python "convert_faraday_to_tavern_v2.py" "!input_file!"
+python "convert_backyard_to_tavern_v2.py" "!input_file!"
