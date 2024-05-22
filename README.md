@@ -20,7 +20,7 @@ PC running Microsoft Windows (required if you want to use the Autoit script)
 1) Download and install Python
 2) Make or load a character in BackyardAI, then go to the Home area -> click on the 3 vertical dots next to the card you want -> click on "Export To PNG" like [this](https://files.catbox.moe/i7zusw.png)
 3) Download this repository by clicking on Code -> Download zip, then extract on your pc.
-4) Drag-n-Drop your BackyardAI(Faraday) png to **"_BackyardAI_To_Tavern (drag & drop backyardAI png here).bat"** to convert to TarvernAI json and TarvernAI png character card.
+4) Drag-n-Drop your BackyardAI(Faraday) png to **"_BackyardAI_To_TavernAI (drag & drop backyardAI png here).bat"** to convert to TarvernAI json and TarvernAI png character card.
    - alternately, run the script like this `python convert_backyardai_to_tavern_v2.py <file_path>` on command line if you're not on windows
    - or you can try "faraday2tavern.py" in the unused folder, though this might only output a json file
 
