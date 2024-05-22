@@ -9,8 +9,7 @@
 
 [Faraday](https://faraday.dev/) (App that allows you to chat with AI Characters Offline)
 
-[Autoit](https://www.autoitscript.com/cgi-bin/getfile.pl?autoit3/autoit-v3-setup.zip) (Scripting/Automation Language)
-or [Python](https://www.python.org/)
+[Python](https://www.python.org/) or [Autoit](https://www.autoitscript.com/cgi-bin/getfile.pl?autoit3/autoit-v3-setup.zip) (Scripting/Automation Language)
 
 PC running Microsoft Windows (required if you want to use the Autoit script)
 
