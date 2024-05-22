@@ -327,8 +327,45 @@ def create_new_data(name, description="A bright and cheerful world", personality
         return extracted_text #return as extracted_text
     else:
         return json_data #return as json_data
+    
+def search_with_partial_filename(directory):
+    # This for when the batch file only captures part of the filename
+    # This attempts to find the rest of the filename, but only will return if there is only 1 certain result (not mutliples with that starting name)
+    # Extract the directory path and partial filename
+    directory_path, partial_filename = os.path.split(directory)
+    
+    # Check if the directory exists
+    if not os.path.isdir(directory_path):
+        print("Error: Directory not found.")
+        return
+    
+    # Initialize a list to store matched filenames
+    matched_files = []
+    
+    # Iterate through files in the directory
+    for filename in os.listdir(directory_path):
+        # Check if the filename starts with the partial filename and ends with ".png"
+        if filename.startswith(partial_filename) and filename.endswith(".png"):
+            # Add the matched filename to the list
+            matched_files.append(os.path.join(directory_path, filename))
+    
+    # Check the number of matched files
+    if len(matched_files) == 1:
+        # If only one file is found, return the full filepath
+        return matched_files[0]
+    else:
+        # Otherwise, return the count of results
+        return len(matched_files)
+    
+def get_file_extension(file_path):
+    _, extension = os.path.splitext(file_path)
+    return extension.lower()[1:]  # Remove the leading dot
 
-# Example usage
+def get_filename_without_extension(file_path):
+    file_name, _ = os.path.splitext(os.path.basename(file_path))
+    return file_name
+
+# Main usage
 def main():
     if len(sys.argv) == 2:
         # For optional drag & drop a png file
@@ -346,13 +383,23 @@ def main():
 
     # Process the PNG file path
     base_name, ext = os.path.splitext(os.path.basename(png_file_path))
-    print(f"base_name=<{base_name}> ext=<{ext}>")
+    print(f"png_file_path=<{png_file_path}> base_name=<{base_name}> ext=<{ext}>")
     #filename = sys.argv[1]
     #print(f"Filename: {filename}")
-
     if ext.lower() != ".png":
+        temp_result = search_with_partial_filename(png_file_path)#tries to check for fullname if batch file gave only partial filename
+        if isinstance(temp_result, int):
+            print(f"Found {temp_result} partial filename matches, so unsure which is the file's name (partial maybe due to the batch file or partly inputed filename).")#found more than one match, do nothing
+            print("Move the png file to the same directory as this script and try again.")
+        else:
+            print(f'Single png match found from partial filename: "{temp_result}"')#only one match found, use it
+            png_file_path = temp_result
+            base_name=get_filename_without_extension(png_file_path)
+    
+    if get_file_extension(png_file_path) != "png":
         print("Error: Please provide a PNG file.")
         sys.exit(1)
+
 
     source_filename = png_file_path
     extracted_text = convert_faraday_png_to_tavern_data(png_file_path)
