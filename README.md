@@ -13,7 +13,7 @@
 
 [Python](https://www.python.org/)
 
-## Setup Python (outputs a TavernAI JSON file and TavernAI PNG file)
+## Setup Python (outputs a TavernAI PNG file and TavernAI JSON file)
 
 1) Download and install Python
 2) Make or load a character in BackyardAI, then go to the Home area -> click on the 3 vertical dots next to the card you want -> click on "Export To PNG" like [this](https://files.catbox.moe/i7zusw.png)
