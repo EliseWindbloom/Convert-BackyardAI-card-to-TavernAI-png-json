@@ -1,4 +1,4 @@
-;Program: Faraday Card to TavernAI json
+;Program: BackyardAI(previously known as Faraday) Card to TavernAI json
 ;Made By: Elise Windbloom
 ;Notes: v1 - initial release
 ;	    v2 - bug fixs and more stable
