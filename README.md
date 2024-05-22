@@ -1,4 +1,4 @@
-# Convert-Faraday-card-to-TavernAI-card-json
+# Convert-BackyardAI-card-to-TavernAI-card-json
 ***Update, Faraday.dev has officially rebranded as BackyardAI: https://backyard.ai/blog/rebranding-to-backyard***
 
 -Currently BackyardAI(previously known as Faraday) can export PNG character cards, however these cards seem to only work with BackyardAI and not with other character AI apps.
