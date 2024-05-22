@@ -10,4 +10,4 @@ if "%~1"=="" (
 
 cd /d %~dp0
 
-python "convert_backyard_to_tavern_v3.py" %1
+python "convert_backyard_to_tavern_v4.py" %1
