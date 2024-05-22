@@ -3,7 +3,7 @@ setlocal enabledelayedexpansion
 
 REM Check if an argument was provided
 if "%~1"=="" (
-    echo Drag and drop an input png file onto this batch file.
+    echo Drag and drop an backyard png file onto this batch file.
     pause
     exit /b 1
 )
