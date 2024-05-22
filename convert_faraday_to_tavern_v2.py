@@ -275,8 +275,8 @@ def main():
     json_data = json.loads(extracted_text)# Convert the extracted text to a proper JSON object
     print("Faraday png data (formatted for tarven):", extracted_text)
     # Save the new PNG with faraday data
-    output_png = f"converted_{base_name}.png"
-    output_json = f"converted_{base_name}.json"
+    output_png = f"{base_name}.tavern.png"
+    output_json = f"{base_name}.tavern.json"
     save_png(json_data, source_filename, output_png)
     save_json(output_json, json_data)# Write data to JSON file
     print(f"Also saved new PNG & JSON with from faraday(converted to tavern) embedded text to {output_png} and {output_json}")
