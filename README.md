@@ -64,7 +64,7 @@ Default database locations:
 
 The script generates:
 1. A TavernAI-compatible PNG character card
-2. A corresponding JSON file with character data
+2. A TavernAI JSON file with character data
 
 ## Version History
 
