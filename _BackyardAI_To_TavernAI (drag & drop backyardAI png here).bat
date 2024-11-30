@@ -1,13 +1,12 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-REM Check if an argument was provided
-if "%~1"=="" (
-    echo Drag and drop an backyard png file onto this batch file.
-    pause
-    exit /b 1
-)
+echo Converting BackyardAI card to TavernAI format...
+echo Full path: %*
 
-cd /d %~dp0
+rem Call Python script with the exact command line arguments
+python "%~dp0backyard_to_tavern.py" --single %*
 
-python "convert_backyard_to_tavern_v4.py" %1
+echo.
+echo Press any key to exit...
+pause >nul
