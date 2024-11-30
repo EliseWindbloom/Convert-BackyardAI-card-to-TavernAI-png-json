@@ -5,7 +5,7 @@ echo Converting BackyardAI card to TavernAI format...
 echo Full path: %*
 
 rem Call Python script with the exact command line arguments
-python "%~dp0backyard_to_tavern_v8.py" --single %*
+python "%~dp0backyard_to_tavern.py" --single %*
 
 echo.
 echo Press any key to exit...
