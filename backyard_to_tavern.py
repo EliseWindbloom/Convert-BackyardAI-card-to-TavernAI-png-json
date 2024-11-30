@@ -1,3 +1,4 @@
+# backyard_to_tavern.py - version 10
 # Script By Elise Windbloom
 # Special thanks to Hukasx0 for faraday2tavern.py eariler alternate version
 # Concepts of this based on html/js character editor by zoltanai: https://zoltanai.github.io/character-editor/
@@ -89,55 +90,28 @@ class Png:
 
 def get_default_db_path():
     """Get the default path to the BackyardAI database"""
-    if sys.platform == 'win32':
-        # Try AppData\Roaming\faraday first
-        roaming_faraday_path = os.path.join(os.environ.get('APPDATA', ''), 'faraday', 'db.sqlite')
-        if os.path.exists(roaming_faraday_path):
-            return roaming_faraday_path
-            
-        # Try AppData\Local\faraday
-        local_path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'faraday', 'db.sqlite')
-        if os.path.exists(local_path):
-            return local_path
-            
-        # Try AppData\Local\BackyardAI
-        local_backyard_path = os.path.join(os.environ.get('LOCALAPPDATA', ''), 'BackyardAI', 'db.sqlite')
-        if os.path.exists(local_backyard_path):
-            return local_backyard_path
-            
-        # Try AppData\Roaming\BackyardAI
-        roaming_path = os.path.join(os.environ.get('APPDATA', ''), 'BackyardAI', 'db.sqlite')
-        if os.path.exists(roaming_path):
-            return roaming_path
-            
-        print(f"Warning: BackyardAI database not found in standard locations:")
-        print(f"- {roaming_faraday_path}")
-        print(f"- {local_path}")
-        print(f"- {local_backyard_path}")
-        print(f"- {roaming_path}")
-        return None
-    
+    if sys.platform == 'win32':  # Windows
+        return os.path.join(os.getenv('APPDATA'), 'faraday', 'db.sqlite')
     elif sys.platform == 'darwin':  # macOS
-        return os.path.expanduser('~/Library/Application Support/BackyardAI/db.sqlite')
+        return os.path.expanduser('~/Library/Application Support/faraday/db.sqlite')
     else:  # Linux and others
-        return os.path.expanduser('~/.local/share/BackyardAI/db.sqlite')
+        return os.path.expanduser('~/.local/share/faraday/db.sqlite')
 
 def get_character_data(db_path=None, skip_if_not_exists=False):
-    """Get character data from BackyardAI database"""
-    if not db_path:
+    """Get character data from the database"""
+    if db_path is None:
         db_path = get_default_db_path()
         
     if not db_path or not os.path.exists(db_path):
         if skip_if_not_exists:
             return []
-        print(f"Warning: BackyardAI database not found at {db_path}")
-        return []
-        
+        raise FileNotFoundError(f"Database file not found: {db_path}")
+
     try:
         conn = sqlite3.connect(db_path)
         cursor = conn.cursor()
         
-        # Get all character configs and their latest versions
+        # Get character data from the new table structure
         query = """
         SELECT 
             cc.id as config_id,
@@ -170,7 +144,7 @@ def get_character_data(db_path=None, skip_if_not_exists=False):
             
             lorebook = {row[0]: row[1] for row in cursor.fetchall()}
             
-            # Get first chat for this character to extract example dialogue
+            # Get chat data for example dialogue and scenario
             cursor.execute("""
                 SELECT c.customDialogue, c.context, c.greetingDialogue
                 FROM Chat c
@@ -190,7 +164,7 @@ def get_character_data(db_path=None, skip_if_not_exists=False):
                 example_dialogue = chat_row[0] if chat_row[0] else ""
                 scenario = chat_row[1] if chat_row[1] else ""
                 first_message = chat_row[2] if chat_row[2] else ""
-
+            
             # Process image paths
             image_paths = []
             if images:
@@ -201,8 +175,8 @@ def get_character_data(db_path=None, skip_if_not_exists=False):
                         image_paths.append(img_path)
                 
             character = {
-                'name': name,
-                'display_name': display_name,
+                'name': name or display_name,
+                'display_name': display_name or name,
                 'description': persona,
                 'scenario': scenario,
                 'first_message': first_message,
@@ -213,11 +187,18 @@ def get_character_data(db_path=None, skip_if_not_exists=False):
             
             characters.append(character)
         
-        conn.close()
+        if not characters:
+            print("No characters found in database.")
+            
         return characters
-    except sqlite3.Error as e:
-        print(f"Error accessing BackyardAI database: {str(e)}")
+        
+    except Exception as e:
+        print(f"Error reading database: {str(e)}")
         return []
+    finally:
+        conn.close()
+    
+    return []
 
 def get_character_from_database(filename, db_path=None, skip_if_not_exists=False):
     """Try to find character data in the BackyardAI database based on filename"""
@@ -305,77 +286,66 @@ def convert_placeholders(text):
 def create_tavern_card(character, output_dir=None, output_filename=None):
     """Create a TavernAI character card"""
     # Create output directory if it doesn't exist
-    if output_dir:
-        os.makedirs(output_dir, exist_ok=True)
-
-    # Clean up the character name for use in filename - use display_name for files
-    clean_name = "".join(x for x in (character['display_name'] or character['name']) if x.isalnum() or x in (' ', '-', '_')).strip()
-    clean_name = clean_name.replace(' ', '_')
+    if not output_dir:
+        output_dir = 'converted_cards'
+    os.makedirs(output_dir, exist_ok=True)
     
-    # Create file paths for both PNG and JSON
-    if output_filename:
-        base_filename = os.path.splitext(output_filename)[0]
+    # Create safe filename if none provided
+    if not output_filename:
+        safe_filename = "".join(x if x.isascii() and (x.isalnum() or x in (' ', '-', '_')) else '_' for x in character['name'])
+        safe_filename = safe_filename.replace(' ', '_')
     else:
-        base_filename = clean_name
+        safe_filename = output_filename
         
-    png_path = os.path.join(output_dir, f"{base_filename}.png")
-    json_path = os.path.join(output_dir, f"{base_filename}.json")
-
-    # Create the character data in TavernAI v2 format - use internal name for character data
+    # Create output paths
+    png_path = os.path.join(output_dir, f"{safe_filename}.png")
+    json_path = os.path.join(output_dir, f"{safe_filename}.json")
+    
+    # Create TavernAI v2 format data
     tavern_data = {
-        'name': character['name'],  # Use internal name for the character's actual name
-        'description': normalize_newlines(convert_placeholders(character['description'])),
-        'personality': "",  # Leave empty since it's same as description
-        'scenario': normalize_newlines(convert_placeholders(character['scenario'])),
-        'first_mes': normalize_newlines(convert_placeholders(character['first_message'])),
-        'mes_example': normalize_newlines(convert_placeholders(character['example_dialogue'])),
-        'creator_notes': "Converted from BackyardAI",
-        'system_prompt': "",
-        'post_history_instructions': "",
-        'alternate_greetings': [],
-        'character_version': "v2",
-        'tags': [],
-        'creator': "Unknown (BackyardAI)",
-        'character_book': None,
-        'extensions': {
-            'world': "",
-            'bias': "",
-            'depth_prompt': "",
-            'jailbreak': ""
+        "name": character['name'],
+        "description": convert_placeholders(character['description']),
+        "personality": convert_placeholders(character.get('personality', '')),
+        "scenario": convert_placeholders(character.get('scenario', '')),
+        "first_mes": convert_placeholders(character.get('first_message', '')),
+        "mes_example": convert_placeholders(character.get('example_dialogue', '')),
+        "creator_notes": "",
+        "system_prompt": convert_placeholders(character.get('base_prompt', '')),
+        "post_history_instructions": "",
+        "alternate_greetings": [],
+        "character_book": {k: convert_placeholders(v) for k, v in character.get('lorebook', {}).items()},
+        "tags": ["NSFW"] if character.get('is_nsfw', False) else [],
+        "creator": "BackyardAI",
+        "character_version": "v2",
+        "extensions": {
+            "temperature": character.get('temperature', 0.8),
+            "repeat_penalty": character.get('repeat_penalty', 1.0),
+            "repeat_last_n": character.get('repeat_last_n', 128),
+            "top_k": character.get('top_k', 30),
+            "top_p": character.get('top_p', 0.9),
+            "min_p": character.get('min_p', 0.1)
         },
-        'metadata': {
-            'version': '2.0',
-            'created': int(time.time()),
-            'modified': int(time.time()),
-            'source': 'BackyardAI',
-            'tool': 'BackyardAI to TavernAI Converter'
-        }
+        "spec": "chara_card_v2"
     }
-
-    # Add lorebook entries if they exist
-    if character['lorebook']:
-        tavern_data['alternate_greetings'] = []
-        for key, value in character['lorebook'].items():
-            tavern_data['alternate_greetings'].append(f"{key}: {value}")
-
+    
     # Save JSON file
     try:
         with open(json_path, 'w', encoding='utf-8') as f:
             json.dump(tavern_data, f, ensure_ascii=False, indent=2)
     except Exception as e:
         print(f"Error saving JSON for {character['name']}: {str(e)}")
-        return None
+        return None, None
 
     # Check for image availability
     if not character['image_paths']:
         print(f"Error: No image found for character {character['name']}")
-        return None
+        return None, None
 
     # Use the first image as the character image
     image_path = character['image_paths'][0]
     if not os.path.exists(image_path):
         print(f"Error: Image not found at {image_path}")
-        return None
+        return None, None
 
     # Convert the data to JSON and encode as base64 for PNG embedding
     json_data = json.dumps(tavern_data, ensure_ascii=False)
@@ -392,10 +362,10 @@ def create_tavern_card(character, output_dir=None, output_filename=None):
             # Save the image with the embedded data
             img.save(png_path, "PNG", pnginfo=info)
             
-        return png_path
+        return png_path, json_path
     except Exception as e:
         print(f"Error creating PNG for {character['name']}: {str(e)}")
-        return None
+        return None, None
 
 def extract_character_data(image_path):
     """Extract character data from a PNG file if it exists"""
@@ -424,70 +394,124 @@ def extract_backyard_png_data(png_file_path):
 
             # Extract and clean the base64 data
             base64_data = png_data[start_index + len(start_marker):end_index]
-            cleaned_base64_data = re.sub(rb'[^a-zA-Z0-9+/]', b'', base64_data)
+            cleaned_base64_data = re.sub(rb'[^a-zA-Z0-9+/=]', b'', base64_data)
             
-            # Remove any padding characters
-            while len(cleaned_base64_data) % 4 != 0:
-                cleaned_base64_data = cleaned_base64_data[:-1]
+            # Add padding if needed
+            padding_needed = len(cleaned_base64_data) % 4
+            if padding_needed:
+                cleaned_base64_data += b'=' * (4 - padding_needed)
 
-            # Decode the base64 data
-            decoded_data = base64.b64decode(cleaned_base64_data)
-            decoded_string = decoded_data.decode('utf-8', errors='replace')
+            try:
+                # Decode the base64 data
+                decoded_data = base64.b64decode(cleaned_base64_data)
+                decoded_string = decoded_data.decode('utf-8', errors='replace')
 
-            # Find JSON boundaries
-            json_start = decoded_string.find('{')
-            json_end = decoded_string.rfind('}') + 1
-            if json_start == -1 or json_end == -1:
-                return None
+                # Find JSON boundaries
+                json_start = decoded_string.find('{"character":')
+                if json_start == -1:
+                    json_start = decoded_string.find('{')
+                json_end = decoded_string.rfind('}')
+                
+                if json_start == -1 or json_end == -1:
+                    return None
 
-            json_string = decoded_string[json_start:json_end]
-            json_data = json.loads(json_string)
+                # Extract the JSON and ensure it's complete
+                json_string = decoded_string[json_start:json_end + 1]
+                
+                # Try to find a complete character object if the JSON is truncated
+                if not json_string.endswith('}'):
+                    char_end = json_string.rfind('}}')
+                    if char_end != -1:
+                        json_string = json_string[:char_end + 2]
 
-            # Extract character data
-            character = json_data.get('character', {})
-            
-            # Split the persona into description and personality
-            ai_persona = character.get('aiPersona', '')
-            description = ""
-            personality = ""
-            world_info = ""
-            
-            # Look for world info section (before appearance)
-            appearance_start = ai_persona.find("{character}'s appearance:")
-            if appearance_start != -1:
-                world_info = ai_persona[:appearance_start].strip()
-            
-            # Extract appearance section
-            personality_start = ai_persona.find("{character}'s personality:")
-            if appearance_start != -1 and personality_start != -1:
-                description = ai_persona[appearance_start:personality_start].strip()
-            elif appearance_start != -1:
-                description = ai_persona[appearance_start:].strip()
-            
-            # Extract personality section
-            if personality_start != -1:
-                personality = ai_persona[personality_start:].strip()
-            
-            # If no sections found, put everything in personality
-            if not description and not personality:
-                personality = ai_persona
-            
-            # Add world info to description
-            if world_info:
-                description = f"{world_info}\n\n{description}" if description else world_info
+                json_data = json.loads(json_string)
 
-            return {
-                'name': character.get('aiName', ''),
-                'description': convert_placeholders(description),
-                'personality': convert_placeholders(personality),
-                'first_message': convert_placeholders(character.get('firstMessage', '')),
-                'example_dialogue': convert_placeholders(character.get('customDialogue', '')),
-                'scenario': convert_placeholders(character.get('scenario', '')),
-                'display_name': character.get('aiDisplayName', '')
-            }
+                # Extract character data
+                character = json_data.get('character', {})
+                
+                # Get the raw fields directly without trying to parse them
+                name = character.get('aiName', '')
+                display_name = character.get('aiDisplayName', '')
+                description = character.get('aiPersona', '')  # Use the entire aiPersona as description
+                scenario = character.get('scenario', '')
+                first_message = character.get('firstMessage', '')
+                custom_dialogue = character.get('customDialogue', '')
+                base_prompt = character.get('basePrompt', '')
 
+                # Get additional fields
+                lore_items = character.get('loreItems', [])
+                lorebook = {}
+                for item in lore_items:
+                    if isinstance(item, dict):
+                        key = item.get('key', '')
+                        value = item.get('value', '')
+                        if key and value:
+                            lorebook[key] = value
+                    elif isinstance(item, str):
+                        lorebook[f'Entry {len(lorebook) + 1}'] = item
+
+                # Get other important fields
+                is_nsfw = character.get('isNSFW', False)
+                temperature = character.get('temperature', 0.8)
+                repeat_penalty = character.get('repeatPenalty', 1.0)
+                repeat_last_n = character.get('repeatLastN', 128)
+                top_k = character.get('topK', 30)
+                top_p = character.get('topP', 0.9)
+                min_p = character.get('minP', 0.1)
+
+                return {
+                    'name': name or display_name,
+                    'display_name': display_name or name,
+                    'description': description,  # Keep the entire aiPersona as description
+                    'personality': '',  # Leave personality empty since it's part of description
+                    'scenario': scenario,
+                    'first_message': first_message,
+                    'example_dialogue': custom_dialogue,
+                    'lorebook': lorebook,
+                    'base_prompt': base_prompt,
+                    'is_nsfw': is_nsfw,
+                    'temperature': temperature,
+                    'repeat_penalty': repeat_penalty,
+                    'repeat_last_n': repeat_last_n,
+                    'top_k': top_k,
+                    'top_p': top_p,
+                    'min_p': min_p
+                }
+            except json.JSONDecodeError as e:
+                print(f"JSON decode error: {str(e)}")
+                # Try to extract just the character object if the full JSON is corrupted
+                try:
+                    char_start = decoded_string.find('"character":{')
+                    if char_start != -1:
+                        char_data = decoded_string[char_start + 11:]  # Skip past '"character":'
+                        char_end = char_data.find('}}')
+                        if char_end != -1:
+                            char_json = '{' + char_data[:char_end + 1] + '}'
+                            character = json.loads(char_json)
+                            # Process character data as before...
+                            return {
+                                'name': character.get('aiName', ''),
+                                'display_name': character.get('aiDisplayName', ''),
+                                'description': character.get('aiPersona', ''),
+                                'personality': '',
+                                'scenario': character.get('scenario', ''),
+                                'first_message': character.get('firstMessage', ''),
+                                'example_dialogue': character.get('customDialogue', ''),
+                                'lorebook': {},
+                                'base_prompt': character.get('basePrompt', ''),
+                                'is_nsfw': character.get('isNSFW', False),
+                                'temperature': character.get('temperature', 0.8),
+                                'repeat_penalty': character.get('repeatPenalty', 1.0),
+                                'repeat_last_n': character.get('repeatLastN', 128),
+                                'top_k': character.get('topK', 30),
+                                'top_p': character.get('topP', 0.9),
+                                'min_p': character.get('minP', 0.1)
+                            }
+                except Exception as e2:
+                    print(f"Error extracting character data: {str(e2)}")
+                    return None
     except Exception as e:
-        print(f"Warning: Could not extract BackyardAI data from {png_file_path}: {str(e)}")
+        print(f"Error extracting BackyardAI data: {str(e)}")
         return None
 
 def convert_single_png(input_path, output_dir):
@@ -513,7 +537,15 @@ def convert_single_png(input_path, output_dir):
                 'scenario': backyard_data['scenario'],
                 'first_message': backyard_data['first_message'],
                 'example_dialogue': backyard_data['example_dialogue'],
-                'lorebook': {k: convert_placeholders(v) for k, v in backyard_data.get('lorebook', {}).items()},
+                'lorebook': backyard_data['lorebook'],
+                'base_prompt': backyard_data['base_prompt'],
+                'is_nsfw': backyard_data['is_nsfw'],
+                'temperature': backyard_data['temperature'],
+                'repeat_penalty': backyard_data['repeat_penalty'],
+                'repeat_last_n': backyard_data['repeat_last_n'],
+                'top_k': backyard_data['top_k'],
+                'top_p': backyard_data['top_p'],
+                'min_p': backyard_data['min_p'],
                 'image_paths': [input_path],
                 'display_name': backyard_data['display_name']
             }
@@ -528,6 +560,14 @@ def convert_single_png(input_path, output_dir):
                 'first_message': existing_data.get('first_mes', "") if existing_data else "",
                 'example_dialogue': existing_data.get('mes_example', "") if existing_data else "",
                 'lorebook': {},
+                'base_prompt': "",
+                'is_nsfw': False,
+                'temperature': 0.8,
+                'repeat_penalty': 1.0,
+                'repeat_last_n': 128,
+                'top_k': 30,
+                'top_p': 0.9,
+                'min_p': 0.1,
                 'image_paths': [input_path],
                 'display_name': existing_data.get('display_name', name_without_ext) if existing_data else name_without_ext
             }
@@ -540,7 +580,18 @@ def convert_single_png(input_path, output_dir):
     safe_filename = safe_filename.replace(' ', '_')
 
     output_path = create_tavern_card(character, output_dir, output_filename=safe_filename)
-    return output_path
+    if isinstance(output_path, tuple):
+        png_path, json_path = output_path
+        if png_path and json_path:
+            print(f"Successfully converted to PNG: {png_path}")
+            print(f"Successfully converted to JSON: {json_path}")
+            return png_path
+        else:
+            print("Failed to convert character card")
+            return None
+    else:
+        print("Failed to convert character card")
+        return None
 
 def create_chunk(type_bytes, data_bytes):
     """Create a PNG chunk"""
@@ -592,16 +643,14 @@ def main():
     parser = argparse.ArgumentParser(description='Convert BackyardAI character cards to TavernAI format')
     parser.add_argument('--single', help='Convert a single PNG file')
     parser.add_argument('--output-dir', default='converted_cards', help='Output directory for converted cards')
-    parser.add_argument('--database', '-d', help='Custom path to BackyardAI database.db')
+    parser.add_argument('--database', '-d', help='Custom path to BackyardAI db.sqlite')
     
     args = parser.parse_args()
     
     if args.single:
         # Skip database check for single file conversions
         print(f"Converting single file: {args.single}")
-        output_path = convert_single_png(args.single, args.output_dir)
-        if output_path:
-            print(f"Successfully converted to: {output_path}")
+        convert_single_png(args.single, args.output_dir)
     else:
         # Only check database for bulk conversions
         characters = get_character_data(args.database, skip_if_not_exists=True)
@@ -618,13 +667,21 @@ def main():
         for i, character in enumerate(characters, 1):
             try:
                 output_path = create_tavern_card(character, args.output_dir)
-                if output_path:
-                    name = character['name'].encode('utf-8', errors='replace').decode('utf-8')
-                    print(f"[{i}/{len(characters)}] Successfully converted: {name} -> {output_path}")
-                    success_count += 1
+                if isinstance(output_path, tuple):
+                    png_path, json_path = output_path
+                    if png_path and json_path:
+                        name = character['name'].encode('utf-8', errors='replace').decode('utf-8')
+                        print(f"[{i}/{len(characters)}] Successfully converted: {name}")
+                        print(f"  PNG: {png_path}")
+                        print(f"  JSON: {json_path}")
+                        success_count += 1
+                    else:
+                        name = character['name'].encode('utf-8', errors='replace').decode('utf-8')
+                        print(f"[{i}/{len(characters)}] Failed to convert: {name}")
+                        error_count += 1
                 else:
                     name = character['name'].encode('utf-8', errors='replace').decode('utf-8')
-                    print(f"[{i}/{len(characters)}] Failed to convert: {name} (No output path returned)")
+                    print(f"[{i}/{len(characters)}] Failed to convert: {name}")
                     error_count += 1
             except Exception as e:
                 name = character['name'].encode('utf-8', errors='replace').decode('utf-8')
