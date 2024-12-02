@@ -10,11 +10,6 @@
 ## Features
 
 - Converts BackyardAI PNG character cards to TavernAI JSON and PNG formats
-- Supports both single file and batch database conversion
-- Robust metadata extraction and preservation
-- Cross-platform compatibility (Windows, macOS, Linux)
-- Handles complex PNG file structures
-- Comprehensive error handling and recovery
 
 ## Requirments
 
@@ -47,29 +42,11 @@ Simply drag and drop your BackyardAI PNG onto **"_BackyardAI_To_TavernAI (drag &
 
 For single file conversion:
 ```bash
-python backyard_to_tavern.py --single <path_to_png>
+python backyard_to_tavern.py <path_to_png>
 ```
-
-To convert all the BackyardAI cards from BackyardAI's database:
-```bash
-python backyard_to_tavern.py --database <path_to_db.sqlite>
-```
-
-Default database locations:
-- Windows: `%APPDATA%\faraday\db.sqlite`
-- macOS: `~/Library/Application Support/faraday/db.sqlite`
-- Linux: `~/.local/share/faraday/db.sqlite`
 
 ## Output
 
 The script generates:
 1. A TavernAI-compatible PNG character card
 2. A TavernAI JSON file with character data
-
-## Version History
-
-- v10: Current stable release
-  - Improved database extraction
-  - Enhanced PNG metadata handling
-  - Better error recovery
-  - Cross-platform compatibility improvements
