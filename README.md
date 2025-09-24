@@ -75,7 +75,7 @@ The script generates:
 
 - **v5 to v13**: (developmental)
   
-- **v4**: Rebuild of autoit version from stratch in part to (attempt to) fix conversion errors and handle Faraday's format better
+- **v4**: Rebuild from stratch in part to (attempt to) fix conversion errors and handle Faraday's format better
 
 ### Additional Previous Versions
 - **faraday2tavern.py** (This version was created by Hukasx0):
