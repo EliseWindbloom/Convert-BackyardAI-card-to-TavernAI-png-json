@@ -1,9 +1,12 @@
 # Convert-BackyardAI-card-to-TavernAI-card-json
+**BackyardAI to TavernAI version 14**  
+
 ***Update, Faraday.dev has officially rebranded as BackyardAI: https://backyard.ai/blog/rebranding-to-backyard***
 
--Currently BackyardAI(previously known as Faraday) can export PNG character cards, however these cards seem to only work with BackyardAI and not with other character AI apps.
+-Currently BackyardAI(previously known as Faraday) can export PNG character cards, however these cards seem to only work with BackyardAI and not with other character AI apps.  
 
--These small scripts converts BackyardAI PNG character cards to TavernAI json files/TavernAI character card PNGs, enabling compatibility and the ability to share your cards with most other character AI apps.
+-This small script converts BackyardAI PNG character cards to TavernAI json files/TavernAI character card PNGs, enabling compatibility and the ability to share your cards with most other character AI apps.  
+-This can also now optionally convert the entire database of your BackyardAI cards in one go.  
 
 [Faraday video installation guide](https://www.youtube.com/watch?v=i_vM8T-oXSw) (NSFW)
 
@@ -29,8 +32,12 @@
 
 ## Installation
 
-1. Download and install Python 3.10 or higher, then run this command on command line `pip install "Pillow>=10.1.0"`
-2. Download this [repo](https://github.com/EliseWindbloom/Convert-BackyardAI-card-to-TavernAI-png-json/archive/refs/heads/main.zip) and extract it.
+1. Install [Python 3.10](https://www.python.org/downloads/release/python-3106/) or higher
+2. Install required dependencies:
+   ```bash
+   pip install "Pillow>=10.1.0"
+   ```
+3. Download this [repo](https://github.com/EliseWindbloom/Convert-BackyardAI-card-to-TavernAI-png-json/archive/refs/heads/main.zip) and extract it.
 
 ## Usage
 
@@ -44,8 +51,35 @@ For single file conversion:
 python backyard_to_tavern.py <path_to_png>
 ```
 
+For batch conversion from database (converts all your BackyardAI cards and saves to "converted_cards" folder):
+```bash
+python backyard_to_tavern.py --database <path_to_db.sqlite>
+```
+
+Default database locations:
+- Windows: `%APPDATA%\faraday\db.sqlite`
+- macOS: `~/Library/Application Support/faraday/db.sqlite`
+- Linux: `~/.local/share/faraday/db.sqlite`
+
 ## Output
 
 The script generates:
 1. A TavernAI-compatible PNG character card
 2. A TavernAI JSON file with character data
+
+## Version History
+
+- **v14**: Current stable release
+  - Second major rebuild, much better PNG/JSON handling for conversions
+  - Optional, extract entire database to convert all your BackyardAI cards to Tavern AI cards (Was able to successfully convert entire database without error when testing)
+
+- **v5 to v13**: (developmental)
+  
+- **v4**: Rebuild from stratch in part to (attempt to) fix conversion errors and handle Faraday's format better
+
+### Additional Previous Versions
+- **faraday2tavern.py** (This version was created by Hukasx0):
+   - Based on autoit version, uses python to convert cards
+ 
+- **BackyardAI card to TavernAI json v4.au3**:
+   - Initial release, uses autoit to attempt to convert cards
