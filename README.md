@@ -33,11 +33,11 @@
 ## Installation
 
 1. Install [Python 3.10](https://www.python.org/downloads/release/python-3106/) or higher
-2. Run Command Line and install pillow using this command:
+2. Download this [repo](https://github.com/EliseWindbloom/Convert-BackyardAI-card-to-TavernAI-png-json/archive/refs/heads/main.zip) and extract it.
+3. Run Command Line and install pillow using this command:
    ```bash
    pip install "Pillow>=10.1.0"
    ```
-3. Download this [repo](https://github.com/EliseWindbloom/Convert-BackyardAI-card-to-TavernAI-png-json/archive/refs/heads/main.zip) and extract it.
 
 ## Usage
 
