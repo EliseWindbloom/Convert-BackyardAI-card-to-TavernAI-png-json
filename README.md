@@ -33,7 +33,7 @@
 ## Installation
 
 1. Install [Python 3.10](https://www.python.org/downloads/release/python-3106/) or higher
-2. Install required dependencies:
+2. Run Command Line and install pillow using this command:
    ```bash
    pip install "Pillow>=10.1.0"
    ```
