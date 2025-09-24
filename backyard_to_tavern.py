@@ -1,417 +1,949 @@
-# backyard to tavern - version 4
+# backyard to tavern - version 14
 # Script By Elise Windbloom
 # Special thanks to Hukasx0 for faraday2tavern.py eariler alternate version
-# Concepts of this based on html/js character editor by zoltanai: https://zoltanai.github.io/character-editor/
-# This was rebuild from stratch in part to fix conversion errors after faraday changed to base64 format for embedded data
+# This is the second major rebuild in part to fix conversion errors and allow optional use of the database
 
 import base64
 import zlib
-from struct import pack, unpack
 import json
-import time
+import re
 import os
 import sys
-import re
+import sqlite3
+from struct import pack, unpack
+from pathlib import Path
+import time
+import argparse
 
-class PngError(Exception):
-    pass
-
-class PngMissingCharacterError(PngError):
-    pass
-
-class PngInvalidCharacterError(PngError):
-    pass
-
-class Png:
-    @staticmethod
-    def read_chunks(data):
-        pos = 8  # Skip the signature
-        chunks = []
-        while pos < len(data):
-            length = unpack(">I", data[pos:pos + 4])[0]
-            chunk_type = data[pos + 4:pos + 8].decode('ascii')
-            chunk_data = data[pos + 8:pos + 8 + length]
-            crc = unpack(">I", data[pos + 8 + length:pos + 12 + length])[0]
-            chunks.append({'type': chunk_type, 'data': chunk_data, 'crc': crc})
-            pos += 12 + length
-        return chunks
-
-    @staticmethod
-    def decode_text(data):
-        keyword, text = data.split(b'\x00', 1)
-        return {'keyword': keyword.decode('latin-1'), 'text': text.decode('latin-1')}
-
-    @staticmethod
-    def encode_text(keyword, text):
-        return keyword.encode('latin-1') + b'\x00' + text.encode('latin-1')
-
-    @staticmethod
-    def encode_chunks(chunks):
-        data = b'\x89PNG\r\n\x1a\n'  # PNG signature
-        for chunk in chunks:
-            length = pack(">I", len(chunk['data']))
-            chunk_type = chunk['type'].encode('ascii')
-            chunk_data = chunk['data']
-            crc = pack(">I", zlib.crc32(chunk_type + chunk_data) & 0xffffffff)
-            data += length + chunk_type + chunk_data + crc
-        return data
-
-    @staticmethod
-    def parse(array_buffer):
-        chunks = Png.read_chunks(array_buffer)
-
-        text_chunks = [Png.decode_text(c['data']) for c in chunks if c['type'] == 'tEXt']
-        if not text_chunks:
-            raise PngMissingCharacterError('No PNG text fields found in file')
-
-        chara = next((t for t in text_chunks if t['keyword'] == 'chara'), None)
-        if chara is None:
-            raise PngMissingCharacterError('No PNG text field named "chara" found in file')
-
+class BackyardToTavernConverter:
+    def __init__(self, debug=False, verbose=False):
+        self.debug = debug
+        self.verbose = verbose
+        self.stats = {
+            'total': 0,
+            'success': 0,
+            'failed': 0,
+            'method_usage': {},
+            'database_extraction': 0,
+            'tavern_format': 0,
+            'backyard_export': 0,
+            'exif_format': 0,
+            'json_only': 0,
+            'png_files': 0
+        }
+        self.db_conn = None
+        self.db_cursor = None
+        self.failed_files = []
+    
+    def debug_print(self, msg):
+        if self.debug:
+            print(f"[DEBUG] {msg}")
+    
+    def verbose_print(self, msg):
+        if self.verbose or self.debug:
+            print(msg)
+    
+    def get_default_db_path(self):
+        """Get the default path to the BackyardAI database"""
+        if sys.platform == 'win32':  # Windows
+            return os.path.join(os.getenv('APPDATA'), 'faraday', 'db.sqlite')
+        elif sys.platform == 'darwin':  # macOS
+            return os.path.expanduser('~/Library/Application Support/faraday/db.sqlite')
+        else:  # Linux and others
+            return os.path.expanduser('~/.local/share/faraday/db.sqlite')
+    
+    def open_database(self, db_path=None):
+        """Open connection to the BackyardAI database"""
+        if db_path is None:
+            db_path = self.get_default_db_path()
+        
+        if not os.path.exists(db_path):
+            self.debug_print(f"Database not found at: {db_path}")
+            return False
+        
         try:
-            return base64.b64decode(chara['text']).decode('utf-8')
+            self.db_conn = sqlite3.connect(db_path)
+            self.db_cursor = self.db_conn.cursor()
+            self.verbose_print(f"Connected to database: {db_path}")
+            return True
         except Exception as e:
-            raise PngInvalidCharacterError('Unable to parse "chara" field as base64', cause=e)
-
-    @staticmethod
-    def generate(array_buffer, json_data):
-        chunks = Png.read_chunks(array_buffer)
-        chunks = [c for c in chunks if c['type'] != 'tEXt']
-
-        chara_text = base64.b64encode(json_data.encode('utf-8')).decode('utf-8')
-        chara_chunk = {'type': 'tEXt', 'data': Png.encode_text('chara', chara_text)}
-        chunks.insert(-1, chara_chunk)
-
-        return Png.encode_chunks(chunks)
+            print(f"Error opening database: {str(e)}")
+            return False
     
-def extract_and_decode_base64(text):
-    # Regular expression to find base64 encoded strings
-    base64_pattern = r'([A-Za-z0-9+/=]+)'
-
-    # Find all potential base64 encoded parts
-    base64_parts = re.findall(base64_pattern, text)
+    def close_database(self):
+        """Close database connection"""
+        if self.db_conn:
+            self.db_conn.close()
+            self.db_conn = None
+            self.db_cursor = None
     
-    for part in base64_parts:
+    def get_character_data_from_db(self, image_path):
+        """Extract character data directly from database for a given image"""
+        if not self.db_cursor:
+            return None
+        
         try:
-            # Decode the base64 part
-            #decoded_bytes = base64.b64decode(part)
-            #decoded_string = decoded_bytes.decode('utf-8')
+            # Get just the filename for matching
+            filename = os.path.basename(image_path)
             
-            # Print the decoded string
-            #print(f"Base64 Encoded Part: {part}")
-            #print(f"Decoded Text: {decoded_string}\n")
+            # Query to get character data from the image filename
+            query = """
+            SELECT 
+                ccv.id,
+                ccv.name,
+                ccv.displayName,
+                ccv.persona,
+                ccv.characterConfigId,
+                gc.name as group_name,
+                c.greetingDialogue,
+                c.customDialogue
+            FROM AppImage ai
+            JOIN _AppImageToCharacterConfigVersion aitc ON ai.id = aitc.A
+            JOIN CharacterConfigVersion ccv ON aitc.B = ccv.id
+            LEFT JOIN CharacterConfig cc ON ccv.characterConfigId = cc.id
+            LEFT JOIN _CharacterConfigToGroupConfig ccgc ON cc.id = ccgc.A
+            LEFT JOIN GroupConfig gc ON ccgc.B = gc.id
+            LEFT JOIN Chat c ON gc.id = c.groupConfigId
+            WHERE ai.imageUrl LIKE ?
+            ORDER BY ccv.createdAt DESC, c.createdAt DESC
+            LIMIT 1
+            """
+            
+            self.db_cursor.execute(query, (f"%{filename}",))
+            result = self.db_cursor.fetchone()
+            
+            if result:
+                self.debug_print(f"Found character in database: {filename}")
+                
+                # Extract the data
+                (version_id, name, display_name, persona, 
+                 char_config_id, group_name, greeting, custom_dialogue) = result
+                
+                # Build character data
+                char_data = {
+                    'name': name or display_name or 'Unknown',
+                    'display_name': display_name or name,
+                    'description': persona or '',
+                    'personality': '',
+                    'scenario': '',
+                    'first_mes': greeting or '',
+                    'mes_example': custom_dialogue or '',
+                }
+                
+                # Parse persona field if it contains structured data
+                if persona:
+                    char_data = self.parse_persona_field(persona, char_data)
+                
+                return char_data
+            
+            return None
+            
+        except Exception as e:
+            self.debug_print(f"Database extraction error: {str(e)}")
+            return None
+    
+    def parse_persona_field(self, persona, char_data):
+        """Parse the persona field to extract structured information"""
+        # If persona contains personality/scenario markers, extract them
+        if '\n' in persona or any(marker in persona.lower() for marker in ['personality:', 'scenario:', 'traits:']):
+            lines = persona.split('\n')
+            
+            for line in lines:
+                line_lower = line.lower().strip()
+                if any(keyword in line_lower for keyword in ['personality:', 'traits:', 'character:']):
+                    if not char_data['personality']:
+                        char_data['personality'] = line.strip()
+                elif any(keyword in line_lower for keyword in ['scenario:', 'setting:', 'context:']):
+                    if not char_data['scenario']:
+                        char_data['scenario'] = line.strip()
+        
+        # If no structured data found, use entire persona as description
+        if not char_data['personality'] and not char_data['scenario']:
+            char_data['description'] = persona
+        
+        return char_data
+    
+    def extract_tavern_format(self, png_data):
+        """Extract character data from TavernAI format PNG (Method 1)"""
+        try:
+            if not png_data.startswith(b'\x89PNG'):
+                return None
+            
+            pos = 8  # Skip PNG signature
+            while pos < len(png_data):
+                if pos + 8 > len(png_data):
+                    break
+                    
+                length = unpack(">I", png_data[pos:pos + 4])[0]
+                chunk_type = png_data[pos + 4:pos + 8].decode('ascii', errors='ignore')
+                
+                if pos + 8 + length > len(png_data):
+                    break
+                    
+                chunk_data = png_data[pos + 8:pos + 8 + length]
+                
+                if chunk_type == 'tEXt':
+                    keyword, text = chunk_data.split(b'\x00', 1)
+                    if keyword == b'chara':
+                        decoded = base64.b64decode(text).decode('utf-8')
+                        self.stats['tavern_format'] += 1
+                        self.debug_print("Found TavernAI format character data")
+                        return json.loads(decoded)
+                
+                pos += 12 + length
+                if chunk_type == 'IEND':
+                    break
+                    
+        except Exception as e:
+            self.debug_print(f"TavernAI extraction failed: {e}")
+        
+        return None
 
-            return part #returns first group only
-        except (base64.binascii.Error, UnicodeDecodeError):
-            # If there's an error in decoding, skip this part
-            continue
-
-def get_faraday_png_extra_base64_data(png_file_path):
-    with open(png_file_path, 'rb') as f:
-        # Read the entire PNG file
-        png_data = f.read()
-
-        # Search for the start and end markers of the base64 data
-        start_marker = b'ASCII'
-        end_marker = b'IDATx'
-        start_index = png_data.find(start_marker)
-        end_index = png_data.find(end_marker, start_index + len(start_marker))
-
-        if start_index != -1 and end_index != -1:
-            # Extract the base64 encoded data
+    def extract_exif_format(self, png_data):
+        """Extract character data from EXIF metadata format (Method 3)"""
+        try:
+            if not png_data.startswith(b'\x89PNG'):
+                return None
+            
+            pos = 8  # Skip PNG signature
+            while pos < len(png_data):
+                if pos + 8 > len(png_data):
+                    break
+                
+                length = unpack(">I", png_data[pos:pos + 4])[0]
+                chunk_type = png_data[pos + 4:pos + 8].decode('ascii', errors='ignore')
+                
+                if pos + 8 + length > len(png_data):
+                    break
+                
+                chunk_data = png_data[pos + 8:pos + 8 + length]
+                
+                # Look for eXIf chunk
+                if chunk_type == 'eXIf':
+                    self.debug_print("Found eXIf chunk")
+                    
+                    # Look for ASCII marker in EXIF data
+                    ascii_marker = b'ASCII'
+                    ascii_index = chunk_data.find(ascii_marker)
+                    
+                    if ascii_index != -1:
+                        # Extract base64 data after ASCII marker
+                        # Look for the end of the base64 data (usually ends with })
+                        start_pos = ascii_index + len(ascii_marker)
+                        
+                        # Skip any whitespace/control characters
+                        while start_pos < len(chunk_data) and chunk_data[start_pos:start_pos+1] in b' \x00\n\r\t':
+                            start_pos += 1
+                        
+                        base64_data = chunk_data[start_pos:]
+                        
+                        # Clean base64 data - remove non-base64 characters
+                        cleaned = b''
+                        for byte in base64_data:
+                            if chr(byte) in 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/=':
+                                cleaned += bytes([byte])
+                            elif cleaned and cleaned[-1:] != b'=' and byte in (0, 1, 2, 3, 4):
+                                # Stop at low control characters after we have data
+                                break
+                        
+                        if cleaned:
+                            try:
+                                # Fix padding if needed
+                                cleaned = cleaned.rstrip(b'=')
+                                padding = 4 - (len(cleaned) % 4)
+                                if padding != 4:
+                                    cleaned += b'=' * padding
+                                
+                                decoded = base64.b64decode(cleaned)
+                                text = decoded.decode('utf-8', errors='ignore')
+                                
+                                # Parse JSON
+                                json_match = re.search(r'(\{.*\})', text, re.DOTALL)
+                                if json_match:
+                                    json_str = json_match.group(1)
+                                    json_data = json.loads(json_str)
+                                    self.stats['exif_format'] = self.stats.get('exif_format', 0) + 1
+                                    self.debug_print("Found character data in EXIF format")
+                                    return self.parse_backyard_format(json_data)
+                            except Exception as e:
+                                self.debug_print(f"Error decoding EXIF base64: {e}")
+                    
+                pos += 12 + length
+                if chunk_type == 'IEND':
+                    break
+        
+        except Exception as e:
+            self.debug_print(f"EXIF extraction failed: {e}")
+        
+        return None
+    
+    def extract_backyard_export(self, png_data):
+        """Extract character data from BackyardAI export format (simplified Method 2)"""
+        try:
+            start_marker = b'ASCII'
+            end_marker = b'IDATx'
+            
+            start_index = png_data.find(start_marker)
+            if start_index == -1:
+                return None
+                
+            end_index = png_data.find(end_marker, start_index + len(start_marker))
+            if end_index == -1:
+                return None
+            
+            # Extract base64 data between markers
             base64_data = png_data[start_index + len(start_marker):end_index]
-
-            # Clean up base64 data by removing non-base64 characters
-            cleaned_base64_data = re.sub(rb'[^a-zA-Z0-9+/]', b'', base64_data)
             
-            # Remove any padding characters ('=')
-            while len(cleaned_base64_data) % 4 != 0:
-                cleaned_base64_data = cleaned_base64_data[:-1]
-            #print(f"cleaned_base64_data=={cleaned_base64_data}") #this is the encoded data
-            # Decode the base64 data without adding padding
-            decoded_data = base64.b64decode(cleaned_base64_data) 
-            #print(f"decoded_data=={decoded_data}") #this is the encoded data
-            decoded_string = decoded_data.decode('utf-8', errors='replace') #this is the decoded data
-
-            version_index = decoded_string.find('"version":')
-            if version_index != -1 and '}' not in decoded_string[version_index:]:
-                decoded_string += "}" #add } at the end if missing after '"version":'
-            #print(f"decoded_string=={decoded_string}") #this is the encoded data
+            # Clean and decode
+            cleaned = re.sub(rb'[^a-zA-Z0-9+/=]', b'', base64_data)
             
-            #return decoded_data
-            # Attempt to find and remove extraneous characters after the JSON data
-            json_start = decoded_string.find('{')
-            json_end = decoded_string.rfind('}') + 1
-            if json_start == -1 or json_end == -1:
-                print("Error: JSON object boundaries not found.")
-                return None
-        
-            json_string = decoded_string[json_start:json_end]
-            #return json_string
-            #Attempt to load the string as JSON and pretty-print it
+            # Fix padding
+            cleaned = cleaned.rstrip(b'=')  # Remove existing padding
+            padding = 4 - (len(cleaned) % 4)
+            if padding != 4:
+                cleaned += b'=' * padding
+            
             try:
-                json_data = json.loads(json_string)
-                formatted_json = json.dumps(json_data, indent=4)
-                return formatted_json
-            except json.JSONDecodeError as e:
-                print(f"Error: JSON decoding failed. {str(e)}")
-                return None
-            
+                decoded = base64.b64decode(cleaned)
+                text = decoded.decode('utf-8', errors='ignore')
+                
+                # Extract JSON
+                json_match = re.search(r'(\{.*\})', text, re.DOTALL)
+                if json_match:
+                    json_str = json_match.group(1)
+                    json_data = json.loads(json_str)
+                    self.stats['backyard_export'] += 1
+                    self.debug_print("Found BackyardAI export format data")
+                    return self.parse_backyard_format(json_data)
+            except:
+                pass
+                
+        except Exception as e:
+            self.debug_print(f"BackyardAI export extraction failed: {e}")
+        
+        return None
+    
+    def parse_backyard_format(self, json_data):
+        """Parse BackyardAI format to standard format"""
+        if 'character' in json_data:
+            character = json_data['character']
         else:
-            print("Base64 encoded data not found in the PNG file.")
-            return None
+            character = json_data
         
-    
-def get_faraday_png_extra_base64_data_UNUSED(png_file_path):
-    #This function is only for Faraday PNGS! use the other functions for normal tavern pngs
-    #Extracts the extra Base64 data from a PNG file and returns it as a formatted JSON string.
-    #Args:
-    #    png_file_path (str): The path to the PNG file.
-    #Returns:
-    #    str: The decoded and formatted extra Base64 data from the PNG file, or None if not found.
-
-    try:
-        with open(png_file_path, 'rb') as f:
-            png_file_content = f.read()
-    except IOError:
-        print("Error: Unable to open the PNG file.")
-        return None
-    
-    try:
-        png_file_string = png_file_content.decode('latin-1')
-    except UnicodeDecodeError:
-        print("Error: Unable to decode the PNG file content.")
-        return None
-    
-    ascii_marker = "ASCII"
-    marker_pos = png_file_string.find(ascii_marker)
-    
-    if marker_pos == -1:
-        print("Error: ASCII marker not found.")
-        return None
-    
-    start_pos = marker_pos + len(ascii_marker)
-    #end_pos = png_file_string.find("Q==", start_pos)
-    end_pos = png_file_string.find("IDATx", start_pos)
-    
-    if end_pos == -1:
-        print("Error: Ending 'IDATx' not found.")
-        return None
-    
-    base64_data = png_file_string[start_pos:end_pos + 5]
-    base64_data = extract_and_decode_base64(base64_data)#tries to strip string to only get the base64 data
-    clean_base64_data = ''.join(char for char in base64_data if char.isalnum() or char in '+/=')
-    
-    # Decoding Base64 data
-    try:
-        vCode = clean_base64_data.replace("-", "+").replace("_", "/")
-        decoded_bytes = base64.b64decode(vCode)
-        decoded_string = decoded_bytes.decode('utf-8', errors='replace')
+        # Extract fields with fallbacks
+        result = {
+            'name': character.get('aiName', character.get('aiDisplayName', character.get('name', 'Unknown'))),
+            'description': character.get('aiPersona', character.get('description', character.get('persona', ''))),
+            'personality': character.get('personality', ''),
+            'scenario': character.get('scenario', ''),
+            'first_mes': character.get('firstMessage', character.get('greeting', character.get('first_mes', ''))),
+            'mes_example': character.get('customDialogue', character.get('examples', character.get('mes_example', ''))),
+        }
         
-        # Attempt to find and remove extraneous characters after the JSON data
-        json_start = decoded_string.find('{')
-        json_end = decoded_string.rfind('}') + 1
+        # Add display name if available
+        if 'aiDisplayName' in character:
+            result['display_name'] = character['aiDisplayName']
+        elif 'display_name' in character:
+            result['display_name'] = character['display_name']
         
-        if json_start == -1 or json_end == -1:
-            print("Error: JSON object boundaries not found.")
-            return None
+        # Convert placeholders
+        for key in ['description', 'personality', 'scenario', 'first_mes', 'mes_example']:
+            if result[key]:
+                result[key] = result[key].replace('{character}', '{{char}}')
+                result[key] = result[key].replace('{user}', '{{user}}')
         
-        json_string = decoded_string[json_start:json_end]
+        return result
+    
+    def generate_unique_filename(self, base_path):
+        """Generate a unique filename to prevent collisions"""
+        if not os.path.exists(base_path):
+            return base_path
         
-        # Attempt to load the string as JSON and pretty-print it
+        dir_name = os.path.dirname(base_path)
+        base_name = os.path.basename(base_path)
+        name_parts = os.path.splitext(base_name)
+        
+        counter = 1
+        while True:
+            new_name = f"{name_parts[0]}_{counter}{name_parts[1]}"
+            new_path = os.path.join(dir_name, new_name)
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
+    
+    def sanitize_filename(self, name):
+        """Sanitize a string for use in filename"""
+        if not name:
+            return "Unknown"
+        # Replace non-ASCII and special characters
+        safe_name = "".join(c if c.isascii() and (c.isalnum() or c in (' ', '-', '_')) else '_' 
+                           for c in name)
+        # Replace spaces with underscores and limit length
+        safe_name = safe_name.replace(' ', '_')
+        # Ensure it's not empty after sanitization
+        if not safe_name:
+            safe_name = "Unknown"
+        return safe_name
+    
+    
+    def convert_file(self, input_path, output_path=None, quiet=False, use_database=True, from_batch=False):
+        """Convert a single file with optimized extraction order"""
+        # Only increment total if not called from batch processing
+        if not from_batch:
+            self.stats['total'] += 1
+        
+        if not os.path.exists(input_path):
+            if not quiet:
+                print(f"Error: File not found: {input_path}")
+            self.stats['failed'] += 1
+            self.failed_files.append(input_path)
+            return False
+        
         try:
-            json_data = json.loads(json_string)
-            formatted_json = json.dumps(json_data, indent=4)
-            return formatted_json
-        except json.JSONDecodeError as e:
-            print(f"Error: JSON decoding failed. {str(e)}")
+            # Read the PNG file
+            with open(input_path, 'rb') as f:
+                png_data = f.read()
+        except Exception as e:
+            if not quiet:
+                print(f"Error reading file: {str(e)}")
+            self.stats['failed'] += 1
+            self.failed_files.append(input_path)
+            return False
+        
+        extracted_data = None
+        extraction_method = None
+        
+        # Optimized extraction order based on what actually works
+        if use_database and self.db_cursor:
+            # Try database first when available (most reliable)
+            self.debug_print("Trying database extraction...")
+            extracted_data = self.get_character_data_from_db(input_path)
+            if extracted_data:
+                extraction_method = "Database"
+                self.stats['database_extraction'] += 1
+        
+        if not extracted_data:
+            # Try TavernAI format (common for imports)
+            self.debug_print("Trying TavernAI format extraction...")
+            extracted_data = self.extract_tavern_format(png_data)
+            if extracted_data:
+                extraction_method = "TavernAI format"
+        
+        if not extracted_data:
+            # Try BackyardAI export format (for exported files)
+            self.debug_print("Trying BackyardAI export format extraction...")
+            extracted_data = self.extract_backyard_export(png_data)
+            if extracted_data:
+                extraction_method = "BackyardAI export"
+
+        if not extracted_data:
+            # Try EXIF format (for alternate BackyardAI exports)
+            self.debug_print("Trying EXIF format extraction...")
+            extracted_data = self.extract_exif_format(png_data)
+            if extracted_data:
+                extraction_method = "EXIF format"
+        
+        if not extracted_data:
+            if not quiet:
+                print(f"✗ Failed to extract character data from: {os.path.basename(input_path)}")
+            self.stats['failed'] += 1
+            self.failed_files.append(input_path)
+            return False
+        
+        # Update method usage stats
+        if extraction_method not in self.stats['method_usage']:
+            self.stats['method_usage'][extraction_method] = 0
+        self.stats['method_usage'][extraction_method] += 1
+        
+        # Create output filename if not specified
+        if not output_path:
+            if from_batch:
+                # For batch mode, use character names (current behavior)
+                base_name = os.path.splitext(os.path.basename(input_path))[0]
+                char_name = extracted_data.get('name', base_name)
+                display_name = extracted_data.get('display_name', '')
+                
+                # Sanitize names for filename
+                safe_name = self.sanitize_filename(char_name)[:100]
+                
+                # Add display name if available and different from main name
+                if display_name and display_name != char_name:
+                    safe_display = self.sanitize_filename(display_name)[:50]
+                    output_path = f"{safe_name} ({safe_display}).tavern.png"
+                else:
+                    output_path = f"{safe_name}.tavern.png"
+            else:
+                # For individual file mode, preserve original filename
+                base_name = os.path.splitext(os.path.basename(input_path))[0]
+                output_path = f"{base_name}.tavern.png"
+                
+                # If it already has .tavern in the name, don't double it
+                if '.tavern' in base_name.lower():
+                    output_path = os.path.basename(input_path)
+        
+        # Ensure unique filename
+        output_path = self.generate_unique_filename(output_path)
+        
+        # Save the converted card
+        try:
+            self.save_tavern_card(extracted_data, png_data, output_path)
+            
+            # ALWAYS save as JSON
+            json_path = output_path.replace('.tavern.png', '.tavern.json')
+            if not json_path.endswith('.json'):  # Safety check
+                json_path = output_path.replace('.png', '.tavern.json')
+            
+            with open(json_path, 'w', encoding='utf-8') as f:
+                json.dump(extracted_data, f, indent=2, ensure_ascii=False)
+            
+            self.verbose_print(f"  Saved JSON: {os.path.basename(json_path)}")
+            
+            if not quiet:
+                if self.verbose:
+                    print(f"✓ Extracted via {extraction_method} -> {os.path.basename(output_path)}")
+                else:
+                    print(f"✓")
+            
+            self.stats['success'] += 1
+            return True
+            
+        except Exception as e:
+            if not quiet:
+                print(f"✗ Error saving: {str(e)}")
+            self.stats['failed'] += 1
+            self.failed_files.append(input_path)
+            return False
+
+
+    def get_database_stats(self):
+        """Get statistics about the database content"""
+        if not self.db_cursor:
             return None
-    
-    except Exception as e:
-        print(f"Error: Decoding base64 data failed. {str(e)}")
-        return None
-
-def convert_faraday_png_to_tavern_data(faraday_png_file_path):
-    #Function for Faraday data ONLY!
-    #This loads the faraday png's embedded data to a variable, then converts it to tarven data 
-    json_string = get_faraday_png_extra_base64_data(faraday_png_file_path)
-    
-    if not json_string:
-        print("Error: Unable to extract JSON data.")
-        return
-    
-    try:
-        json_data = json.loads(json_string)
         
-        ai_display_name = json_data.get('character', {}).get('aiDisplayName', 'N/A')
-        ai_name = json_data.get('character', {}).get('aiName', 'N/A')
-        ai_persona = json_data.get('character', {}).get('aiPersona', 'N/A')
-        custom_dialogue = json_data.get('character', {}).get('customDialogue', 'N/A')
-        first_message = json_data.get('character', {}).get('firstMessage', 'N/A')
-        scenario = json_data.get('character', {}).get('scenario', 'N/A')
+        stats = {}
         
-        print("==AI Display Name:", ai_display_name)
-        print("==AI Name:", ai_name)
-        print("==AI Persona:", ai_persona)
-        print("==Custom Dialogue:", custom_dialogue)#example text
-        print("==First Message:", first_message)
-        print("==Scenario:", scenario)
-
-        #format as tavern data and returns
-        tavern_extracted_text = create_new_data(ai_name, "", ai_persona, scenario, first_message, custom_dialogue)
-        return tavern_extracted_text
+        # Total character configs
+        self.db_cursor.execute("SELECT COUNT(*) FROM CharacterConfig")
+        stats['total_configs'] = self.db_cursor.fetchone()[0]
+        
+        # Non-user characters
+        self.db_cursor.execute("""
+            SELECT COUNT(*) FROM CharacterConfig 
+            WHERE isUserControlled = 0 AND isDefaultUserCharacter = 0
+        """)
+        stats['non_user_chars'] = self.db_cursor.fetchone()[0]
+        
+        # Characters with images
+        self.db_cursor.execute("""
+            SELECT COUNT(DISTINCT ccv.id)
+            FROM CharacterConfigVersion ccv
+            JOIN CharacterConfig cc ON ccv.characterConfigId = cc.id
+            JOIN _AppImageToCharacterConfigVersion aitc ON ccv.id = aitc.B
+            WHERE cc.isUserControlled = 0 AND cc.isDefaultUserCharacter = 0
+        """)
+        stats['chars_with_images'] = self.db_cursor.fetchone()[0]
+        
+        # Characters without images  
+        self.db_cursor.execute("""
+            SELECT COUNT(DISTINCT ccv.id)
+            FROM CharacterConfigVersion ccv
+            JOIN CharacterConfig cc ON ccv.characterConfigId = cc.id
+            LEFT JOIN _AppImageToCharacterConfigVersion aitc ON ccv.id = aitc.B
+            WHERE cc.isUserControlled = 0 AND cc.isDefaultUserCharacter = 0
+            AND aitc.B IS NULL
+        """)
+        stats['chars_without_images'] = self.db_cursor.fetchone()[0]
+        
+        return stats
     
-    except json.JSONDecodeError as e:
-        print(f"Error: JSON decoding failed. {str(e)}")
-
-
-def load_png(filename):
-    # For extracting the embedded tavern data from a png containing embedded tavern data
-    with open(filename, "rb") as f:
-        data = f.read()
-    try:
-        extracted_text = Png.parse(data)
-        return extracted_text
-    except PngError as e:
-        print(f"Error reading {filename}: {e}")
-        return None
-
-def save_png(extracted_text, source_filename, output_filename):
-    # For saving a png with tavern data embedded into it
-    with open(source_filename, "rb") as f:
-        source_data = f.read()
-    json_data = json.dumps(extracted_text, indent=4)
-    output_data = Png.generate(source_data, json_data)
-    with open(output_filename, "wb") as f:
-        f.write(output_data)
-
-def save_json(json_filename, json_data):
-    # Write tavern data to JSON file
-    # use json.loads(extracted_text) to get it formatted correctly for this function
-    with open(json_filename, "w") as json_file:
-        json.dump(json_data, json_file, indent=4)  # `indent` parameter formats the JSON data with indentation
-
-def create_new_data(name, description="A bright and cheerful world", personality="Friendly and helpful", scenario="", first_mes="Hello, how can I assist you today?", mes_example="{{user}}: Hi\n{{char}}: Hello!", return_as_json_data=False):
-    # For creating completely new tavern data from scratch
-    description = description.replace("{character}", "{{char}}")
-    description = description.replace("{user}", "{{user}}")
-    personality = personality.replace("{character}", "{{char}}")
-    personality = personality.replace("{user}", "{{user}}")
-    scenario = scenario.replace("{character}", "{{char}}")
-    scenario = scenario.replace("{user}", "{{user}}")
-    first_mes = first_mes.replace("{character}", "{{char}}")
-    first_mes = first_mes.replace("{user}", "{{user}}")
-    mes_example = mes_example.replace("{character}", "{{char}}")
-    mes_example = mes_example.replace("{user}", "{{user}}")
-    json_data = {
-        "name": name,
-        "description": description,
-        "personality": personality,
-        "scenario": scenario,
-        "first_mes": first_mes,
-        "mes_example": mes_example,
-        "metadata": {
-            "version": 1,
-            "created": int(time.time() * 1000),
-            "modified": int(time.time() * 1000),
-            "source": None,
-            "tool": {
-                "name": "Custom AI Character Editor",
-                "version": "0.5.0",
-                "url": "https://example.com/character-editor/"
+    def save_tavern_card(self, char_data, original_png, output_path):
+        """Save character data as TavernAI card"""
+        # Remove display_name from the data that goes into the card
+        card_data = char_data.copy()
+        if 'display_name' in card_data:
+            del card_data['display_name']
+        
+        # Add metadata
+        card_data['metadata'] = {
+            'version': 1,
+            'created': int(time.time() * 1000),
+            'modified': int(time.time() * 1000),
+            'tool': {
+                'name': 'BackyardAI to TavernAI Converter',
+                'version': '4.0.0',
+                'source': 'Optimized Edition'
             }
         }
-    }
-    # can format the created data to be in the "extracted_text" style 
-    if return_as_json_data==False:
-        extracted_text = json.dumps(json_data, indent=4)#without this, it would be the same as json_data
-        return extracted_text #return as extracted_text
-    else:
-        return json_data #return as json_data
+        
+        # Encode as base64
+        json_str = json.dumps(card_data, ensure_ascii=False)
+        chara_base64 = base64.b64encode(json_str.encode('utf-8')).decode('utf-8')
+        
+        # Parse PNG chunks
+        chunks = self.read_png_chunks(original_png)
+        
+        # Remove existing tEXt chunks with 'chara' keyword
+        chunks = [c for c in chunks if not (c['type'] == 'tEXt' and b'chara\x00' in c.get('data', b''))]
+        
+        # Create new tEXt chunk
+        chara_data = b'chara\x00' + chara_base64.encode('latin-1')
+        chara_chunk = {
+            'type': 'tEXt',
+            'data': chara_data,
+            'crc': zlib.crc32(b'tEXt' + chara_data) & 0xffffffff
+        }
+        
+        # Insert before IEND
+        iend_index = next((i for i, c in enumerate(chunks) if c['type'] == 'IEND'), len(chunks)-1)
+        chunks.insert(iend_index, chara_chunk)
+        
+        # Write new PNG
+        with open(output_path, 'wb') as f:
+            f.write(b'\x89PNG\r\n\x1a\n')
+            for chunk in chunks:
+                length = pack(">I", len(chunk['data']))
+                chunk_type = chunk['type'].encode('ascii')
+                crc = pack(">I", chunk['crc'])
+                f.write(length + chunk_type + chunk['data'] + crc)
     
-def search_with_partial_filename(directory):
-    # This for when the batch file only captures part of the filename
-    # This attempts to find the rest of the filename, but only will return if there is only 1 certain result (not mutliples with that starting name)
-    # Extract the directory path and partial filename
-    directory_path, partial_filename = os.path.split(directory)
+    def read_png_chunks(self, data):
+        """Read PNG chunks from data"""
+        pos = 8  # Skip signature
+        chunks = []
+        while pos < len(data):
+            if pos + 8 > len(data):
+                break
+            length = unpack(">I", data[pos:pos + 4])[0]
+            chunk_type = data[pos + 4:pos + 8].decode('ascii', errors='ignore')
+            
+            if pos + 8 + length > len(data):
+                break
+                
+            chunk_data = data[pos + 8:pos + 8 + length]
+            crc = unpack(">I", data[pos + 8 + length:pos + 12 + length])[0] if pos + 12 + length <= len(data) else 0
+            
+            chunks.append({
+                'type': chunk_type,
+                'data': chunk_data,
+                'crc': crc
+            })
+            pos += 12 + length
+            if chunk_type == 'IEND':
+                break
+        return chunks
     
-    # Check if the directory exists
-    if not os.path.isdir(directory_path):
-        print("Error: Directory not found.")
-        return
-    
-    # Initialize a list to store matched filenames
-    matched_files = []
-    
-    # Iterate through files in the directory
-    for filename in os.listdir(directory_path):
-        # Check if the filename starts with the partial filename and ends with ".png"
-        if filename.startswith(partial_filename) and filename.endswith(".png"):
-            # Add the matched filename to the list
-            matched_files.append(os.path.join(directory_path, filename))
-    
-    # Check the number of matched files
-    if len(matched_files) == 1:
-        # If only one file is found, return the full filepath
-        return matched_files[0]
-    else:
-        # Otherwise, return the count of results
-        return len(matched_files)
-    
-def get_file_extension(file_path):
-    _, extension = os.path.splitext(file_path)
-    return extension.lower()[1:]  # Remove the leading dot
 
-def get_filename_without_extension(file_path):
-    file_name, _ = os.path.splitext(os.path.basename(file_path))
-    return file_name
+    def get_character_files_from_db(self):
+        """Get all character files from the BackyardAI database"""
+        if not self.db_cursor:
+            return []
+        
+        try:
+            # Modified query to include characters without images using LEFT JOIN
+            query = """
+            SELECT DISTINCT 
+                ccv.id as version_id,
+                ccv.name,
+                ccv.displayName,
+                ccv.persona,
+                ai.imageUrl,
+                MAX(c.greetingDialogue) as greetingDialogue,
+                MAX(c.customDialogue) as customDialogue
+            FROM CharacterConfig cc
+            JOIN CharacterConfigVersion ccv ON cc.id = ccv.characterConfigId
+            LEFT JOIN _AppImageToCharacterConfigVersion aitc ON ccv.id = aitc.B
+            LEFT JOIN AppImage ai ON aitc.A = ai.id
+            LEFT JOIN _CharacterConfigToGroupConfig ccgc ON cc.id = ccgc.A
+            LEFT JOIN GroupConfig gc ON ccgc.B = gc.id
+            LEFT JOIN Chat c ON gc.id = c.groupConfigId
+            WHERE cc.isUserControlled = 0 
+            AND cc.isDefaultUserCharacter = 0
+            GROUP BY ccv.id, ccv.name, ccv.displayName, ccv.persona, ai.imageUrl
+            ORDER BY ccv.name
+            """
+            
+            self.db_cursor.execute(query)
+            character_files = []
+            seen_versions = set()  # Track character versions to avoid true duplicates
+            
+            for row in self.db_cursor.fetchall():
+                version_id, name, display_name, persona, image_url, greeting, custom_dialogue = row
+                
+                # Skip if we've already processed this character version
+                if version_id in seen_versions:
+                    continue
+                seen_versions.add(version_id)
+                
+                # Include all characters, even without images
+                character_info = {
+                    'version_id': version_id,
+                    'name': name or 'Unknown',
+                    'display_name': display_name,
+                    'persona': persona,
+                    'greeting': greeting,
+                    'custom_dialogue': custom_dialogue,
+                    'has_image': False,
+                    'path': None
+                }
+                
+                # Check if image exists
+                if image_url:
+                    normalized_path = os.path.normpath(image_url)
+                    if os.path.exists(normalized_path):
+                        character_info['path'] = normalized_path
+                        character_info['has_image'] = True
+                    else:
+                        self.debug_print(f"Image not found for {name}: {image_url}")
+                
+                character_files.append(character_info)
+            
+            return character_files
+            
+        except Exception as e:
+            print(f"Error reading database: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
 
-# Main usage
+
+    def convert_batch(self, files, output_dir='converted_cards'):
+        """Convert multiple files"""
+        try:
+            os.makedirs(output_dir, exist_ok=True)
+        except Exception as e:
+            print(f"Error creating output directory: {str(e)}")
+            return
+        
+        # Set the total count once at the beginning
+        self.stats['total'] = len(files)
+        
+        no_image_count = sum(1 for f in files if not f.get('has_image', True))
+        if no_image_count > 0:
+            print(f"\nNote: {no_image_count} characters have no images (will export as JSON only)")
+        
+        print(f"\nConverting {len(files)} characters to: {output_dir}")
+        print("-" * 60)
+        
+        for i, file_info in enumerate(files, 1):
+            if isinstance(file_info, dict):
+                char_name = file_info.get('name', 'Unknown')
+                display_name = file_info.get('display_name', '')
+                has_image = file_info.get('has_image', True)
+                
+                # Create display text for progress
+                display_text = char_name[:30]
+                if display_name and display_name != char_name:
+                    display_text += f" ({display_name[:20]})"
+                
+                # Handle characters without images
+                if not has_image:
+                    display_text += " [JSON-only]"
+                    print(f"[{i}/{len(files)}] Converting: {display_text}...", end=' ')
+                    
+                    # Extract character data directly from the database info
+                    char_data = {
+                        'name': char_name,
+                        'display_name': display_name or char_name,
+                        'description': file_info.get('persona', ''),
+                        'personality': '',
+                        'scenario': '',
+                        'first_mes': file_info.get('greeting', ''),
+                        'mes_example': file_info.get('custom_dialogue', ''),
+                    }
+                    
+                    # Parse persona field if available
+                    if file_info.get('persona'):
+                        char_data = self.parse_persona_field(file_info['persona'], char_data)
+                    
+                    # Save as JSON only
+                    safe_name = self.sanitize_filename(char_name)[:100]
+                    if display_name and display_name != char_name:
+                        safe_display = self.sanitize_filename(display_name)[:50]
+                        json_filename = f"{safe_name} ({safe_display}).tavern.json"
+                    else:
+                        json_filename = f"{safe_name}.tavern.json"
+                    
+                    json_path = os.path.join(output_dir, json_filename)
+                    json_path = self.generate_unique_filename(json_path)
+                    
+                    try:
+                        with open(json_path, 'w', encoding='utf-8') as f:
+                            json.dump(char_data, f, indent=2, ensure_ascii=False)
+                        print("✓ (JSON)")
+                        self.stats['success'] += 1
+                        self.stats['json_only'] += 1
+                    except Exception as e:
+                        print(f"✗ {str(e)}")
+                        self.stats['failed'] += 1
+                    
+                    continue
+                
+                # Normal processing for characters with images
+                file_path = file_info['path']
+                
+                # Generate proper output filename based on character names
+                safe_name = self.sanitize_filename(char_name)[:100]
+                if display_name and display_name != char_name:
+                    safe_display = self.sanitize_filename(display_name)[:50]
+                    output_filename = f"{safe_name} ({safe_display}).tavern.png"
+                else:
+                    output_filename = f"{safe_name}.tavern.png"
+                
+                output_path = os.path.join(output_dir, output_filename)
+                
+                print(f"[{i}/{len(files)}] Converting: {display_text}...", end=' ')
+                
+                # Ensure unique filename
+                output_path = self.generate_unique_filename(output_path)
+                
+                # Pass from_batch=True to prevent double counting
+                success = self.convert_file(file_path, output_path, quiet=True, from_batch=True)
+                
+                if success:
+                    self.stats['png_files'] += 1
+                else:
+                    print("✗")
+            else:
+                # Legacy support for simple file paths  
+                file_path = file_info
+                display_text = os.path.basename(file_path)[:50]
+                output_path = None
+                
+                print(f"[{i}/{len(files)}] Converting: {display_text}...", end=' ')
+                # Also pass from_batch=True here
+                success = self.convert_file(file_path, output_path, quiet=True, from_batch=True)
+                
+                if not success:
+                    print("✗")
+
+
+    def print_summary(self):
+        """Print conversion summary"""
+        print("\n" + "=" * 60)
+        print("Conversion Summary")
+        print("-" * 60)
+        print(f"Total characters: {self.stats['total']}")
+        print(f"Successful: {self.stats['success']}")
+        print(f"Failed: {self.stats['failed']}")
+        
+        json_only = self.stats.get('json_only', 0)
+        png_count = self.stats['success'] - json_only
+        
+        if self.stats['success'] > 0:
+            if png_count > 0:
+                print(f"\n✓ Generated {png_count} PNG files (with embedded data)")
+                print(f"✓ Generated {png_count} accompanying JSON files")
+            if json_only > 0:
+                print(f"✓ Generated {json_only} JSON-only files (no image)")
+        
+        if self.stats['method_usage']:
+            print("\nExtraction methods used:")
+            for method, count in sorted(self.stats['method_usage'].items(), 
+                                    key=lambda x: x[1], reverse=True):
+                percentage = (count / png_count * 100) if png_count > 0 else 0
+                print(f"  {method}: {count} ({percentage:.1f}%)")
+        
+        if self.failed_files:
+            print(f"\nFailed files ({len(self.failed_files)}):")
+            for file_path in self.failed_files[:5]:  # Show first 5
+                print(f"  - {os.path.basename(file_path)}")
+            if len(self.failed_files) > 5:
+                print(f"  ... and {len(self.failed_files) - 5} more")
+        
+        print("\nConversion complete!")
+
+
 def main():
-    if len(sys.argv) == 2:
-        # For optional drag & drop a png file
-        png_file_path = sys.argv[1]
-    elif len(sys.argv) == 1:
-        # If no command-line argument is provided, prompt the user for the file path
-        png_file_path = input("Enter the path to the Faraday PNG file: ")
-    else:
-        print(f"Usage: python {sys.argv[0]} [<file_path>]")
-        sys.exit(1)
-
-    # Handling quoted paths
-    if png_file_path.startswith('"') and png_file_path.endswith('"'):
-        png_file_path = png_file_path[1:-1]
-
-    # Process the PNG file path
-    base_name, ext = os.path.splitext(os.path.basename(png_file_path))
-    print(f"png_file_path=<{png_file_path}> base_name=<{base_name}> ext=<{ext}>")
-    #filename = sys.argv[1]
-    #print(f"Filename: {filename}")
-    if ext.lower() != ".png":
-        temp_result = search_with_partial_filename(png_file_path)#tries to check for fullname if batch file gave only partial filename
-        if isinstance(temp_result, int):
-            print(f"Found {temp_result} partial filename matches, so unsure which is the file's name (partial maybe due to the batch file or partly inputed filename).")#found more than one match, do nothing
-            print("Move the png file to the same directory as this script and try again.")
-        else:
-            print(f'Single png match found from partial filename: "{temp_result}"')#only one match found, use it
-            png_file_path = temp_result
-            base_name=get_filename_without_extension(png_file_path)
+    parser = argparse.ArgumentParser(
+        description='Convert BackyardAI character cards to TavernAI format (Optimized)',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  Convert single file:
+    %(prog)s "character.png"
     
-    if get_file_extension(png_file_path) != "png":
-        print("Error: Please provide a PNG file.")
-        sys.exit(1)
-
-
-    source_filename = png_file_path
-    extracted_text = convert_faraday_png_to_tavern_data(png_file_path)
-    json_data = json.loads(extracted_text)# Convert the extracted text to a proper JSON object
-    print("Faraday png data (formatted for tarven):", extracted_text)
-    # Save the new PNG with faraday data
-    output_png = f"{base_name}.tavern.png"
-    output_json = f"{base_name}.tavern.json"
-    save_png(json_data, source_filename, output_png)
-    save_json(output_json, json_data)# Write data to JSON file
-    print(f"Also saved new PNG & JSON with from faraday(converted to tavern) embedded text to {output_png} and {output_json}")
+  Convert from database:
+    %(prog)s --database
+    
+  Convert from custom database:
+    %(prog)s --database "path/to/db.sqlite"
+    
+  Convert with debug output:
+    %(prog)s --database --debug
+    
+Note: Both PNG and JSON files are always generated for each character.
+        """
+    )
+    
+    parser.add_argument('input_file', nargs='?', help='Single PNG file to convert')
+    parser.add_argument('--database', '-d', nargs='?', const='default', 
+                       help='Convert all from BackyardAI database')
+    parser.add_argument('--output-dir', '-o', default='converted_cards',
+                       help='Output directory (default: converted_cards)')
+    parser.add_argument('--debug', action='store_true', help='Enable debug output')
+    parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose output')
+    
+    args = parser.parse_args()
+    
+    # Create converter
+    converter = BackyardToTavernConverter(debug=args.debug, verbose=args.verbose)
+    
+    if args.database:
+        # Database batch mode
+        db_path = None if args.database == 'default' else args.database
+        
+        if converter.open_database(db_path):
+            print("=" * 60)
+            print("BackyardAI Database Batch Conversion")
+            print("=" * 60)
+            
+            # Show database statistics
+            db_stats = converter.get_database_stats()
+            if db_stats:
+                print("\nDatabase Statistics:")
+                print(f"  Total character configs: {db_stats['total_configs']}")
+                print(f"  Non-user characters: {db_stats['non_user_chars']}")
+                print(f"  Characters with images: {db_stats['chars_with_images']}")
+                print(f"  Characters without images: {db_stats['chars_without_images']}")
+                print(f"  Expected total to export: {db_stats['chars_with_images'] + db_stats['chars_without_images']}")
+                print()
+            
+            files = converter.get_character_files_from_db()
+            if files:
+                print(f"Found {len(files)} character files in database")
+                converter.convert_batch(files, args.output_dir)
+            else:
+                print("No character files found in database")
+            
+            converter.close_database()
+            converter.print_summary()
+        else:
+            print("Failed to open database")
+            if args.database == 'default':
+                print(f"Default location: {converter.get_default_db_path()}")
+                print("Use --database with a path to specify a different location")
+        
+    elif args.input_file:
+        # Single file mode
+        input_file = args.input_file.strip('"')
+        
+        # Try with database support for better extraction
+        converter.open_database()
+        
+        print(f"Converting: {os.path.basename(input_file)}")
+        success = converter.convert_file(input_file, use_database=converter.db_cursor is not None)
+        
+        converter.close_database()
+        
+        if success:
+            print("✓ Conversion successful!")
+            print("  Generated .tavern.png and .tavern.json files")
+        else:
+            print("\n✗ Conversion failed")
+            if not args.debug:
+                print("Tip: Run with --debug for more information")
+    else:
+        parser.print_help()
 
 if __name__ == "__main__":
     main()
