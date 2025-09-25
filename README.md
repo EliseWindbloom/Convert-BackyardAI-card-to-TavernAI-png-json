@@ -16,7 +16,7 @@
 
 ## Requirments
 
-[BackyardAI](https://backyard.ai/) (App that allows you to chat with AI Characters Offline)
+[BackyardAI](https://update.backyard.ai/download/windows) (App that allows you to chat with AI Characters Offline)
 
 [Python](https://www.python.org/)
 
