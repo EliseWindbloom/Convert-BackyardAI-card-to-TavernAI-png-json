@@ -69,7 +69,7 @@ The script generates:
 
 ## Version History
 
-- **v14**: Current stable release
+- **v14**:
   - Second major rebuild, much better PNG/JSON handling for conversions
   - Optional, extract entire database to convert all your BackyardAI cards to Tavern AI cards (Was able to successfully convert entire database without error when testing)
 
